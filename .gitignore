@@ -1,0 +1,9 @@
+# Arduino build output
+build/
+
+# macOS
+.DS_Store
+
+# Editor/IDE
+.vscode/
+*.swp
