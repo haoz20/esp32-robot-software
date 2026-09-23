@@ -102,29 +102,57 @@ def main():
     frame_grabber = FrameGrabber(config.ROBOT_IP, port=config.ROBOT_STREAM_PORT)
     detector = Detector(config.MODEL_PATH, config.CONFIDENCE_THRESHOLD)
     nav_state = NavigatorState()
+    stream_backoff_s = 1.0
 
     try:
         while True:
             try:
                 frame = frame_grabber.read()
             except RuntimeError:
-                robot_client.stop()
-                time.sleep(1.0)
+                _stop_best_effort(robot_client)
+                if _wait_up_to(cv2, config.KILL_SWITCH_KEY, stream_backoff_s):
+                    break
+                frame_grabber.release()
+                frame_grabber = FrameGrabber(config.ROBOT_IP, port=config.ROBOT_STREAM_PORT)
+                stream_backoff_s = min(stream_backoff_s * 2, 10.0)
                 continue
 
-            _, nav_state, detections = run_tick(nav_state, frame, detector, robot_client)
+            stream_backoff_s = 1.0
+
+            try:
+                _, nav_state, detections = run_tick(nav_state, frame, detector, robot_client)
+            except requests.exceptions.RequestException as exc:
+                print(f"autonomy: lost contact with the robot, stopping: {exc}")
+                break
 
             cv2.imshow("autonomy", draw_debug_frame(frame, detections, nav_state))
             key = cv2.waitKey(1) & 0xFF
             if key == config.KILL_SWITCH_KEY:
-                robot_client.stop()
+                _stop_best_effort(robot_client)
                 break
 
             time.sleep(config.LOOP_INTERVAL_S)
     finally:
-        robot_client.stop()
+        _stop_best_effort(robot_client)
         frame_grabber.release()
         cv2.destroyAllWindows()
+
+
+def _stop_best_effort(robot_client):
+    """Attempt /stop with retries; never raises, so cleanup/exit can't be skipped."""
+    try:
+        _stop_with_retries(robot_client)
+    except requests.exceptions.RequestException:
+        pass
+
+
+def _wait_up_to(cv2_module, kill_switch_key, seconds):
+    """Wait up to `seconds`, polling the kill switch every 50ms. Returns True if killed."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if (cv2_module.waitKey(50) & 0xFF) == kill_switch_key:
+            return True
+    return False
 
 
 if __name__ == "__main__":

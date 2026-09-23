@@ -1,6 +1,7 @@
 import pytest
 import requests
 
+from autonomy import config
 from autonomy.main import run_tick
 from autonomy.navigator import Command, CommandType, NavigatorState, State
 
@@ -124,3 +125,52 @@ def test_run_tick_retries_stop_before_giving_up():
     assert robot_client.calls == ["right", "stop (failed)", "stop (failed)", "stop"]
     # one sleep for the pulse duration, two for the stop-retry backoff
     assert len(sleeps) == 3
+
+
+@pytest.mark.parametrize(
+    "command_type, expected_call, expected_pulse_s",
+    [
+        (CommandType.TURN_LEFT, "left", config.TURN_PULSE_S),
+        (CommandType.TURN_RIGHT, "right", config.TURN_PULSE_S),
+        (CommandType.CREEP_FORWARD, "go", config.CREEP_PULSE_S),
+    ],
+)
+def test_run_tick_dispatches_each_command_to_the_right_call_and_pulse(
+    command_type, expected_call, expected_pulse_s, monkeypatch
+):
+    from autonomy import main as main_module
+
+    monkeypatch.setattr(
+        main_module, "step",
+        lambda *a, **k: (Command(command_type), NavigatorState(state=State.SEARCHING)),
+    )
+
+    robot_client = FakeRobotClient()
+    sleeps = []
+    run_tick(
+        NavigatorState(state=State.SEARCHING), frame="fake-frame",
+        detector=FakeDetector([]), robot_client=robot_client, sleep=sleeps.append,
+    )
+
+    assert robot_client.calls == [expected_call, "stop"]
+    assert sleeps == [expected_pulse_s]
+
+
+class AlwaysFailingStopRobotClient(FakeRobotClient):
+    def stop(self):
+        self.calls.append("stop (failed)")
+        raise requests.exceptions.ConnectionError("simulated network failure")
+
+
+def test_run_tick_reraises_after_all_stop_retries_are_exhausted():
+    nav_state = NavigatorState(state=State.SEARCHING, rotation_step=0)
+    detector = FakeDetector([])
+    robot_client = AlwaysFailingStopRobotClient()
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        run_tick(
+            nav_state, frame="fake-frame", detector=detector,
+            robot_client=robot_client, sleep=lambda s: None
+        )
+
+    assert robot_client.calls == ["right", "stop (failed)", "stop (failed)", "stop (failed)"]
