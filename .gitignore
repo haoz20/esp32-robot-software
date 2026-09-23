@@ -7,3 +7,6 @@ build/
 # Editor/IDE
 .vscode/
 *.swp
+
+# Models
+models/
