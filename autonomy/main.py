@@ -7,6 +7,8 @@ overlay, and check the kill switch.
 
 import time
 
+import requests
+
 from autonomy import config
 from autonomy.detector import Detector
 from autonomy.navigator import CommandType, NavigatorState, State, step
@@ -23,6 +25,8 @@ _COMMAND_TO_PULSE_S = {
     CommandType.TURN_RIGHT: config.TURN_PULSE_S,
     CommandType.CREEP_FORWARD: config.CREEP_PULSE_S,
 }
+_STOP_RETRY_ATTEMPTS = 3
+_STOP_RETRY_DELAY_S = 0.2
 
 
 def run_tick(nav_state, frame, detector, robot_client, sleep=time.sleep):
@@ -39,10 +43,32 @@ def run_tick(nav_state, frame, detector, robot_client, sleep=time.sleep):
     )
     call_name = _COMMAND_TO_CLIENT_CALL.get(command.type)
     if call_name is not None:
-        getattr(robot_client, call_name)()
-        sleep(_COMMAND_TO_PULSE_S[command.type])
-        robot_client.stop()
+        try:
+            getattr(robot_client, call_name)()
+            sleep(_COMMAND_TO_PULSE_S[command.type])
+        finally:
+            _stop_with_retries(robot_client, sleep=sleep)
     return command, new_nav_state, detections
+
+
+def _stop_with_retries(robot_client, sleep=time.sleep):
+    """Send /stop, retrying a few times before giving up.
+
+    A movement pulse's paired stop is the single highest-risk failure in
+    this system: the robot has no obstacle sensor, so a stop that never
+    arrives leaves it driving indefinitely (the firmware's drive endpoints
+    run until told to stop). Retry before letting the failure propagate.
+    """
+    last_error = None
+    for attempt in range(_STOP_RETRY_ATTEMPTS):
+        try:
+            robot_client.stop()
+            return
+        except requests.exceptions.RequestException as exc:
+            last_error = exc
+            if attempt < _STOP_RETRY_ATTEMPTS - 1:
+                sleep(_STOP_RETRY_DELAY_S)
+    raise last_error
 
 
 def draw_debug_frame(frame, detections, nav_state):
