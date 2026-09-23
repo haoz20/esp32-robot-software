@@ -1,0 +1,105 @@
+"""Wires the camera stream, detector, navigator, and robot client together.
+
+The control loop, in order, each tick: grab a frame, detect, ask the
+navigator for a command, execute it as a pulse-then-stop, draw the debug
+overlay, and check the kill switch.
+"""
+
+import time
+
+from autonomy import config
+from autonomy.detector import Detector
+from autonomy.navigator import CommandType, NavigatorState, State, step
+from autonomy.robot_client import RobotClient
+from autonomy.stream import FrameGrabber
+
+_COMMAND_TO_CLIENT_CALL = {
+    CommandType.TURN_LEFT: "left",
+    CommandType.TURN_RIGHT: "right",
+    CommandType.CREEP_FORWARD: "go",
+}
+_COMMAND_TO_PULSE_S = {
+    CommandType.TURN_LEFT: config.TURN_PULSE_S,
+    CommandType.TURN_RIGHT: config.TURN_PULSE_S,
+    CommandType.CREEP_FORWARD: config.CREEP_PULSE_S,
+}
+
+
+def run_tick(nav_state, frame, detector, robot_client, sleep=time.sleep):
+    """Run one control-loop tick. Returns (command, new_nav_state, detections)."""
+    detections = detector.detect(frame)
+    command, new_nav_state = step(
+        nav_state,
+        detections,
+        confidence_threshold=config.CONFIDENCE_THRESHOLD,
+        deadzone_fraction=config.DEADZONE_FRACTION,
+        arrival_height_fraction=config.ARRIVAL_HEIGHT_FRACTION,
+        lost_target_ticks=config.LOST_TARGET_TICKS,
+        rotation_steps_per_sweep=config.ROTATION_STEPS_PER_SWEEP,
+    )
+    call_name = _COMMAND_TO_CLIENT_CALL.get(command.type)
+    if call_name is not None:
+        getattr(robot_client, call_name)()
+        sleep(_COMMAND_TO_PULSE_S[command.type])
+        robot_client.stop()
+    return command, new_nav_state, detections
+
+
+def draw_debug_frame(frame, detections, nav_state):
+    import cv2
+
+    annotated = frame.copy()
+    height, width = annotated.shape[0], annotated.shape[1]
+    for detection in detections:
+        x1 = int((detection.x_center - detection.width / 2) * width)
+        y1 = int((detection.y_center - detection.height / 2) * height)
+        x2 = int((detection.x_center + detection.width / 2) * width)
+        y2 = int((detection.y_center + detection.height / 2) * height)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(
+            annotated, f"{detection.label} {detection.confidence:.2f}",
+            (x1, max(y1 - 5, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
+        )
+    cv2.putText(
+        annotated, nav_state.state.name, (10, 20),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2,
+    )
+    return annotated
+
+
+def main():
+    import cv2
+
+    robot_client = RobotClient(
+        config.ROBOT_IP, port=config.ROBOT_HTTP_PORT, timeout_s=config.ROBOT_HTTP_TIMEOUT_S
+    )
+    frame_grabber = FrameGrabber(config.ROBOT_IP, port=config.ROBOT_STREAM_PORT)
+    detector = Detector(config.MODEL_PATH, config.CONFIDENCE_THRESHOLD)
+    nav_state = NavigatorState()
+
+    try:
+        while True:
+            try:
+                frame = frame_grabber.read()
+            except RuntimeError:
+                robot_client.stop()
+                time.sleep(1.0)
+                continue
+
+            _, nav_state, detections = run_tick(nav_state, frame, detector, robot_client)
+
+            cv2.imshow("autonomy", draw_debug_frame(frame, detections, nav_state))
+            key = cv2.waitKey(1) & 0xFF
+            if key == config.KILL_SWITCH_KEY:
+                robot_client.stop()
+                break
+
+            time.sleep(config.LOOP_INTERVAL_S)
+    finally:
+        robot_client.stop()
+        frame_grabber.release()
+        cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
