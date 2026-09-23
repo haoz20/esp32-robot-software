@@ -1,0 +1,12 @@
+name: esp32-robot-autonomy
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - opencv
+  - numpy
+  - pip
+  - pip:
+      - ultralytics
+      - requests
+      - pytest
