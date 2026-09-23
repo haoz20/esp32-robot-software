@@ -53,5 +53,20 @@ def best_detection(detections, confidence_threshold):
 
 def step(nav_state, detections, *, confidence_threshold, deadzone_fraction,
           arrival_height_fraction, lost_target_ticks, rotation_steps_per_sweep):
-    """Placeholder - will be implemented in later steps."""
-    return Command(CommandType.NONE), NavigatorState()
+    target = best_detection(detections, confidence_threshold)
+    state = nav_state.state
+
+    if state == State.SEARCHING and target is not None:
+        state = State.APPROACHING
+
+    if state == State.SEARCHING:
+        if nav_state.rotation_step >= rotation_steps_per_sweep:
+            return Command(CommandType.CREEP_FORWARD), NavigatorState(
+                state=State.SEARCHING, rotation_step=0, lost_ticks=0
+            )
+        return Command(CommandType.TURN_RIGHT), NavigatorState(
+            state=State.SEARCHING, rotation_step=nav_state.rotation_step + 1, lost_ticks=0
+        )
+
+    # APPROACHING/ARRIVED handled in a later step
+    return Command(CommandType.NONE), NavigatorState(state=state, rotation_step=0, lost_ticks=0)
