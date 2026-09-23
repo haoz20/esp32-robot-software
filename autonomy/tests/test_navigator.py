@@ -67,3 +67,60 @@ def test_searching_transitions_to_approaching_when_target_found():
     centered_far = make_detection(x_center=0.5, height=0.2)
     command, next_state = step(nav_state, [centered_far], **SEARCH_KWARGS)
     assert next_state.state == State.APPROACHING
+
+
+def test_approaching_turns_left_when_target_is_left_of_center():
+    nav_state = NavigatorState(state=State.APPROACHING)
+    left_target = make_detection(x_center=0.2, height=0.2)
+    command, next_state = step(nav_state, [left_target], **SEARCH_KWARGS)
+    assert command == Command(CommandType.TURN_LEFT)
+    assert next_state.state == State.APPROACHING
+
+
+def test_approaching_turns_right_when_target_is_right_of_center():
+    nav_state = NavigatorState(state=State.APPROACHING)
+    right_target = make_detection(x_center=0.8, height=0.2)
+    command, next_state = step(nav_state, [right_target], **SEARCH_KWARGS)
+    assert command == Command(CommandType.TURN_RIGHT)
+    assert next_state.state == State.APPROACHING
+
+
+def test_approaching_creeps_forward_when_centered_but_small():
+    nav_state = NavigatorState(state=State.APPROACHING)
+    small_centered = make_detection(x_center=0.5, height=0.2)
+    command, next_state = step(nav_state, [small_centered], **SEARCH_KWARGS)
+    assert command == Command(CommandType.CREEP_FORWARD)
+    assert next_state.state == State.APPROACHING
+
+
+def test_approaching_arrives_when_centered_and_large():
+    nav_state = NavigatorState(state=State.APPROACHING)
+    close_centered = make_detection(x_center=0.5, height=0.9)
+    command, next_state = step(nav_state, [close_centered], **SEARCH_KWARGS)
+    assert command == Command(CommandType.NONE)
+    assert next_state.state == State.ARRIVED
+
+
+def test_approaching_reverts_to_searching_after_losing_target_for_n_ticks():
+    nav_state = NavigatorState(state=State.APPROACHING, lost_ticks=0)
+    command, next_state = step(nav_state, [], **SEARCH_KWARGS)
+    assert next_state.state == State.APPROACHING
+    assert next_state.lost_ticks == 1
+
+    nav_state = next_state
+    command, next_state = step(nav_state, [], **SEARCH_KWARGS)
+    assert next_state.state == State.APPROACHING
+    assert next_state.lost_ticks == 2
+
+    nav_state = next_state
+    command, next_state = step(nav_state, [], **SEARCH_KWARGS)
+    assert next_state.state == State.SEARCHING
+    assert next_state.lost_ticks == 0
+
+
+def test_arrived_stays_arrived_and_issues_no_commands():
+    nav_state = NavigatorState(state=State.ARRIVED)
+    target = make_detection(x_center=0.5, height=0.9)
+    command, next_state = step(nav_state, [target], **SEARCH_KWARGS)
+    assert command == Command(CommandType.NONE)
+    assert next_state.state == State.ARRIVED

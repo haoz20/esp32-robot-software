@@ -68,5 +68,34 @@ def step(nav_state, detections, *, confidence_threshold, deadzone_fraction,
             state=State.SEARCHING, rotation_step=nav_state.rotation_step + 1, lost_ticks=0
         )
 
-    # APPROACHING/ARRIVED handled in a later step
-    return Command(CommandType.NONE), NavigatorState(state=state, rotation_step=0, lost_ticks=0)
+    if state == State.APPROACHING:
+        if target is None:
+            lost_ticks = nav_state.lost_ticks + 1
+            if lost_ticks >= lost_target_ticks:
+                return Command(CommandType.NONE), NavigatorState(
+                    state=State.SEARCHING, rotation_step=0, lost_ticks=0
+                )
+            return Command(CommandType.NONE), NavigatorState(
+                state=State.APPROACHING, rotation_step=0, lost_ticks=lost_ticks
+            )
+
+        offset = target.x_center - 0.5
+        if abs(offset) > deadzone_fraction:
+            turn = CommandType.TURN_LEFT if offset < 0 else CommandType.TURN_RIGHT
+            return Command(turn), NavigatorState(
+                state=State.APPROACHING, rotation_step=0, lost_ticks=0
+            )
+
+        if target.height < arrival_height_fraction:
+            return Command(CommandType.CREEP_FORWARD), NavigatorState(
+                state=State.APPROACHING, rotation_step=0, lost_ticks=0
+            )
+
+        return Command(CommandType.NONE), NavigatorState(
+            state=State.ARRIVED, rotation_step=0, lost_ticks=0
+        )
+
+    # ARRIVED
+    return Command(CommandType.NONE), NavigatorState(
+        state=State.ARRIVED, rotation_step=0, lost_ticks=0
+    )
