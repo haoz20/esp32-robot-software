@@ -5,6 +5,22 @@ navigator for a command, execute it as a pulse-then-stop, draw the debug
 overlay, and check the kill switch.
 """
 
+import os
+
+# opencv-python and torch (via ultralytics) each bundle their own copy of
+# libomp.dylib on macOS; loading both aborts the process with "OMP: Error
+# #15" unless this is set before either is imported. Letting both
+# runtimes actually run threads concurrently -- e.g. cv2's stream-reading
+# thread alongside a torch inference call -- can still segfault even with
+# the abort suppressed, so also pin both to a single thread each; for one
+# frame at a time on a control loop this costs negligible latency and
+# avoids the concurrent-thread-pool collision entirely. All of this must
+# be set before any lazy cv2/torch import below.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+
 import time
 
 import requests
@@ -120,10 +136,13 @@ def main():
             stream_backoff_s = 1.0
 
             try:
-                _, nav_state, detections = run_tick(nav_state, frame, detector, robot_client)
+                command, nav_state, detections = run_tick(nav_state, frame, detector, robot_client)
             except requests.exceptions.RequestException as exc:
                 print(f"autonomy: lost contact with the robot, stopping: {exc}")
                 break
+
+            seen = ", ".join(f"{d.label} {d.confidence:.2f}" for d in detections) or "nothing"
+            print(f"[{nav_state.state.name}] sees: {seen} -> {command.type.name}")
 
             cv2.imshow("autonomy", draw_debug_frame(frame, detections, nav_state))
             key = cv2.waitKey(1) & 0xFF
