@@ -3,10 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
-  - opencv
   - numpy
   - pip
   - pip:
+      - opencv-python
       - ultralytics
       - requests
       - pytest
