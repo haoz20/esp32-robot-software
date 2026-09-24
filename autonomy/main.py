@@ -129,8 +129,7 @@ def main():
                 frame = frame_grabber.read()
             except RuntimeError:
                 _stop_best_effort(robot_client)
-                if _wait_up_to(cv2, config.KILL_SWITCH_KEY, stream_backoff_s):
-                    break
+                _wait_up_to(stream_backoff_s)
                 frame_grabber.release()
                 try:
                     frame_grabber = FrameGrabber(config.ROBOT_IP, port=config.ROBOT_STREAM_PORT)
@@ -178,13 +177,20 @@ def _stop_best_effort(robot_client):
         pass
 
 
-def _wait_up_to(cv2_module, kill_switch_key, seconds):
-    """Wait up to `seconds`, polling the kill switch every 50ms. Returns True if killed."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if (cv2_module.waitKey(50) & 0xFF) == kill_switch_key:
-            return True
-    return False
+def _wait_up_to(seconds):
+    """Wait up to `seconds` (a bounded stream-reconnect backoff, capped at 10s).
+
+    Does not poll the kill switch here: this previously called
+    cv2.waitKey() in a loop, which hung indefinitely instead of returning
+    every 50ms as documented on at least one real setup (Windows), freezing
+    the whole process with no error and no way to recover short of killing
+    it externally. The robot is already stopped for the whole duration of
+    this wait (the caller stops it before calling this), so losing kill-
+    switch responsiveness for this one bounded wait isn't a safety issue --
+    it just means the kill switch takes up to `seconds` to register if
+    pressed while the stream is down, rather than a real hang.
+    """
+    time.sleep(seconds)
 
 
 if __name__ == "__main__":

@@ -109,6 +109,13 @@ class FrameGrabber:
 
     def release(self):
         self._stop_event.set()
+        # Close the underlying connection BEFORE joining the thread: if the
+        # background thread is blocked inside a socket read when release()
+        # is called, closing the connection first is what actually unblocks
+        # it (some platforms, notably Windows, can otherwise leave a read
+        # blocked indefinitely on a socket that's still technically open,
+        # even after the peer stops responding -- silently hanging the
+        # whole process rather than raising).
+        self._capture.release()
         if self._thread is not None:
             self._thread.join(timeout=1.0)
-        self._capture.release()
