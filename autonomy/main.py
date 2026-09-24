@@ -112,6 +112,9 @@ def draw_debug_frame(frame, detections, nav_state):
 def main():
     import cv2
 
+    cv2.namedWindow(config.DEBUG_WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(config.DEBUG_WINDOW_NAME, config.DEBUG_WINDOW_WIDTH, config.DEBUG_WINDOW_HEIGHT)
+
     robot_client = RobotClient(
         config.ROBOT_IP, port=config.ROBOT_HTTP_PORT, timeout_s=config.ROBOT_HTTP_TIMEOUT_S
     )
@@ -129,7 +132,17 @@ def main():
                 if _wait_up_to(cv2, config.KILL_SWITCH_KEY, stream_backoff_s):
                     break
                 frame_grabber.release()
-                frame_grabber = FrameGrabber(config.ROBOT_IP, port=config.ROBOT_STREAM_PORT)
+                try:
+                    frame_grabber = FrameGrabber(config.ROBOT_IP, port=config.ROBOT_STREAM_PORT)
+                except Exception as exc:
+                    # Reconnect failed -- likely the robot hasn't finished
+                    # recovering yet (e.g. a brief brownout/WiFi drop from
+                    # motor current draw). frame_grabber still points at the
+                    # old, already-released grabber; its next .read() call
+                    # raises RuntimeError immediately (stale/no frame),
+                    # routing back through this same branch to retry with a
+                    # longer backoff, instead of crashing the process.
+                    print(f"autonomy: stream reconnect failed ({exc}), retrying in up to {stream_backoff_s:.0f}s")
                 stream_backoff_s = min(stream_backoff_s * 2, 10.0)
                 continue
 
@@ -144,7 +157,7 @@ def main():
             seen = ", ".join(f"{d.label} {d.confidence:.2f}" for d in detections) or "nothing"
             print(f"[{nav_state.state.name}] sees: {seen} -> {command.type.name}")
 
-            cv2.imshow("autonomy", draw_debug_frame(frame, detections, nav_state))
+            cv2.imshow(config.DEBUG_WINDOW_NAME, draw_debug_frame(frame, detections, nav_state))
             key = cv2.waitKey(1) & 0xFF
             if key == config.KILL_SWITCH_KEY:
                 _stop_best_effort(robot_client)

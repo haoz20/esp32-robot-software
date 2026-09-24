@@ -28,3 +28,12 @@ CREEP_PULSE_S = 0.4
 # --- Control loop ---
 LOOP_INTERVAL_S = 0.25
 KILL_SWITCH_KEY = ord(" ")
+
+# --- Debug window ---
+# The ESP32's stream frame is small (its native resolution); cv2's default
+# window mode locks to that exact pixel size and just shows blank padding
+# on maximize. Displaying at this larger fixed size makes it actually
+# watchable.
+DEBUG_WINDOW_NAME = "autonomy"
+DEBUG_WINDOW_WIDTH = 960
+DEBUG_WINDOW_HEIGHT = 720
