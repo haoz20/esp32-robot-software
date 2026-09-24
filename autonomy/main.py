@@ -27,7 +27,7 @@ import requests
 
 from autonomy import config
 from autonomy.detector import Detector
-from autonomy.navigator import CommandType, NavigatorState, State, step
+from autonomy.navigator import Command, CommandType, NavigatorState, State, step
 from autonomy.robot_client import RobotClient
 from autonomy.stream import FrameGrabber
 
@@ -62,8 +62,16 @@ def run_tick(nav_state, frame, detector, robot_client, sleep=time.sleep):
         try:
             getattr(robot_client, call_name)()
             sleep(_COMMAND_TO_PULSE_S[command.type])
-        finally:
+        except requests.exceptions.RequestException as exc:
+            # A single dropped request on the robot's busy WiFi link is
+            # routine -- the robot's own control page (index_handler in
+            # app_httpd.cpp) fires commands and silently ignores failures.
+            # Treat it as "nothing happened this tick": stop, and keep the
+            # old nav state so the same step is retried next tick.
+            print(f"autonomy: {call_name} command dropped ({exc}), retrying next tick")
             _stop_with_retries(robot_client, sleep=sleep)
+            return Command(CommandType.NONE), nav_state, detections
+        _stop_with_retries(robot_client, sleep=sleep)
     return command, new_nav_state, detections
 
 
@@ -150,8 +158,14 @@ def main():
             try:
                 command, nav_state, detections = run_tick(nav_state, frame, detector, robot_client)
             except requests.exceptions.RequestException as exc:
-                print(f"autonomy: lost contact with the robot, stopping: {exc}")
-                break
+                # Even /stop's retries failed. Exiting wouldn't stop the
+                # robot either -- it would just stop trying. Keep looping:
+                # the next tick sends /stop again, and if the robot is truly
+                # gone the stream goes stale and the reconnect path above
+                # backs off. Falls through so the kill switch is still polled.
+                print(f"autonomy: can't reach the robot ({exc}), retrying")
+                _stop_best_effort(robot_client)
+                command, detections = Command(CommandType.NONE), []
 
             seen = ", ".join(f"{d.label} {d.confidence:.2f}" for d in detections) or "nothing"
             print(f"[{nav_state.state.name}] sees: {seen} -> {command.type.name}")

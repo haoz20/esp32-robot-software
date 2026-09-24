@@ -87,13 +87,37 @@ def test_run_tick_still_stops_when_the_movement_call_fails():
     detector = FakeDetector([])
     robot_client = RaisingOnceRobotClient()
 
-    with pytest.raises(requests.exceptions.ConnectionError):
-        run_tick(
-            nav_state, frame="fake-frame", detector=detector,
-            robot_client=robot_client, sleep=lambda s: None
-        )
+    run_tick(
+        nav_state, frame="fake-frame", detector=detector,
+        robot_client=robot_client, sleep=lambda s: None
+    )
 
     assert robot_client.calls == ["right (raised)", "stop"]
+
+
+def test_a_dropped_movement_command_is_not_fatal_and_is_retried_next_tick():
+    # The robot's own control page fires commands and ignores failures; one
+    # dropped request on a busy WiFi link must not end the autonomy run.
+    nav_state = NavigatorState(state=State.SEARCHING, rotation_step=3)
+    detector = FakeDetector([])
+    robot_client = RaisingOnceRobotClient()
+
+    command, next_state, _ = run_tick(
+        nav_state, frame="fake-frame", detector=detector,
+        robot_client=robot_client, sleep=lambda s: None
+    )
+
+    assert command == Command(CommandType.NONE)
+    assert next_state == nav_state  # not advanced: the turn never happened
+
+    command, next_state, _ = run_tick(
+        next_state, frame="fake-frame", detector=detector,
+        robot_client=robot_client, sleep=lambda s: None
+    )
+
+    assert command == Command(CommandType.TURN_RIGHT)
+    assert next_state.rotation_step == 4
+    assert robot_client.calls == ["right (raised)", "stop", "right", "stop"]
 
 
 class FlakyStopRobotClient(FakeRobotClient):
