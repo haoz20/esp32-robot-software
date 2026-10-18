@@ -122,3 +122,99 @@ def test_background_thread_picks_up_frames_pushed_to_the_capture():
     grabber.release()
     assert picked_up, "background thread never picked up the pushed frame"
     assert captures[0].released is True
+
+
+def _wait_for(predicate, timeout_s=2.0):
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+class DyingCapture:
+    """Returns one frame, then reports the connection dead."""
+
+    def __init__(self, url, frame):
+        self.url = url
+        self._reads = [(True, frame)]
+        self.released = False
+
+    def read(self):
+        if self._reads:
+            return self._reads.pop(0)
+        if self.released:
+            return False, None
+        time.sleep(0.01)
+        return False, None
+
+    def release(self):
+        self.released = True
+
+
+def test_background_thread_reconnects_after_the_connection_dies():
+    captures = []
+
+    def factory(url):
+        capture = DyingCapture(url, frame=f"frame-from-connection-{len(captures) + 1}")
+        captures.append(capture)
+        return capture
+
+    grabber = FrameGrabber("192.168.4.1", capture_factory=factory,
+                           reconnect_backoff_s=0.01, log=lambda msg: None)
+    try:
+        assert _wait_for(lambda: len(captures) >= 2), "never reconnected"
+        assert captures[0].released is True
+        assert _wait_for(lambda: grabber.latest()[1] == "frame-from-connection-2")
+    finally:
+        grabber.release()
+
+
+def test_a_failed_first_connect_is_retried_instead_of_raising():
+    attempts = []
+
+    def factory(url):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise ConnectionError("robot not up yet")
+        return BlockingFakeCapture(url)
+
+    grabber = FrameGrabber("192.168.4.1", capture_factory=factory,
+                           reconnect_backoff_s=0.01, log=lambda msg: None)
+    try:
+        assert _wait_for(lambda: len(attempts) >= 2), "first connect failure was not retried"
+    finally:
+        grabber.release()
+
+
+def test_a_stale_frame_does_not_drop_the_connection():
+    # read() raising on a stale frame only means "don't act on it"; the
+    # connection must stay open so frames resume after a short WiFi gap.
+    clock = [100.0]
+    captures = []
+
+    def factory(url):
+        capture = FakeCapture(url)
+        captures.append(capture)
+        return capture
+
+    grabber = FrameGrabber("192.168.4.1", capture_factory=factory, start_thread=False,
+                           clock=lambda: clock[0], max_frame_age_s=1.0)
+    grabber._store_frame("frame1")
+    clock[0] = 102.0
+    with pytest.raises(RuntimeError):
+        grabber.read()
+    assert len(captures) == 1
+    assert captures[0].released is False
+
+
+def test_latest_reports_frame_id_and_age_without_raising():
+    clock = [100.0]
+    grabber = FrameGrabber("192.168.4.1", capture_factory=FakeCapture, start_thread=False,
+                           clock=lambda: clock[0])
+    assert grabber.latest() == (0, None, None)
+
+    grabber._store_frame("frame1")
+    clock[0] = 105.0  # stale for read(), still fine for display
+    assert grabber.latest() == (1, "frame1", 5.0)

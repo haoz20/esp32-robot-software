@@ -4,9 +4,24 @@
     {
       "name": "robot-control-ui",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "webapp",
       "port": 5173
+    },
+    {
+      "name": "laptop-ui",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8000",
+        "--bind",
+        "127.0.0.1"
+      ],
+      "port": 8000
     }
   ]
 }

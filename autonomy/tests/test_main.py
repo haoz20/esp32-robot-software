@@ -198,3 +198,109 @@ def test_run_tick_reraises_after_all_stop_retries_are_exhausted():
         )
 
     assert robot_client.calls == ["right", "stop (failed)", "stop (failed)", "stop (failed)"]
+
+
+from autonomy.main import _ControlView, _Spin, control_loop
+from autonomy.navigator import Detection
+
+
+def _sighting(confidence=0.9):
+    return Detection(label="red_bottle", confidence=confidence, x_center=0.5,
+                     y_center=0.5, width=0.2, height=0.2)
+
+
+def test_continuous_search_starts_a_spin_once_and_leaves_it_running():
+    robot_client = FakeRobotClient()
+    spin = _Spin(clock=lambda: 0.0)
+    nav_state = NavigatorState(state=State.SEARCHING)
+
+    for _ in range(3):
+        command, nav_state, _ = run_tick(
+            nav_state, frame="f", detector=FakeDetector([]), robot_client=robot_client,
+            sleep=lambda s: None, continuous_search=True, spin=spin,
+        )
+
+    assert command == Command(CommandType.SPIN_RIGHT)
+    assert robot_client.calls == ["right"]  # no stop between frames
+    assert spin.active
+
+
+def test_a_sighting_mid_spin_stops_settles_and_confirms():
+    robot_client = FakeRobotClient()
+    spin = _Spin(clock=lambda: 0.0)
+    spin.start()
+    sleeps = []
+
+    command, nav_state, _ = run_tick(
+        NavigatorState(state=State.SEARCHING), frame="f",
+        detector=FakeDetector([_sighting(confidence=0.4)]), robot_client=robot_client,
+        sleep=sleeps.append, continuous_search=True, spin=spin,
+    )
+
+    assert command == Command(CommandType.STOP)
+    assert nav_state.state == State.CONFIRMING
+    assert robot_client.calls == ["stop"]
+    assert sleeps == [config.SPIN_SETTLE_S]
+    assert not spin.active
+
+
+def test_a_pulse_command_while_spinning_stops_the_spin_first():
+    robot_client = FakeRobotClient()
+    spin = _Spin(clock=lambda: 100.0)
+    spin.start()
+
+    # Spinning too long with nothing seen -> creep forward for a new view.
+    spin._started_at = 100.0 - config.MAX_SPIN_S
+    run_tick(
+        NavigatorState(state=State.SEARCHING), frame="f", detector=FakeDetector([]),
+        robot_client=robot_client, sleep=lambda s: None, continuous_search=True, spin=spin,
+    )
+
+    assert robot_client.calls == ["stop", "go", "stop"]
+    assert not spin.active
+
+
+def test_a_dropped_spin_command_stops_and_is_retried_next_tick():
+    robot_client = RaisingOnceRobotClient()
+    spin = _Spin(clock=lambda: 0.0)
+    nav_state = NavigatorState(state=State.SEARCHING)
+
+    command, nav_state, _ = run_tick(
+        nav_state, frame="f", detector=FakeDetector([]), robot_client=robot_client,
+        sleep=lambda s: None, continuous_search=True, spin=spin,
+    )
+    assert command == Command(CommandType.NONE)
+    assert not spin.active
+
+    run_tick(
+        nav_state, frame="f", detector=FakeDetector([]), robot_client=robot_client,
+        sleep=lambda s: None, continuous_search=True, spin=spin,
+    )
+    assert robot_client.calls == ["right (raised)", "stop", "right"]
+    assert spin.active
+
+
+class StaleGrabber:
+    def __init__(self, stop_event, stale_reads):
+        self._stop_event = stop_event
+        self._stale_reads = stale_reads
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        if self.reads > self._stale_reads:
+            self._stop_event.set()
+        raise RuntimeError("frame is 2.0s old")
+
+
+def test_control_loop_holds_the_robot_stopped_while_frames_are_stale():
+    import threading
+
+    stop_event = threading.Event()
+    robot_client = FakeRobotClient()
+    grabber = StaleGrabber(stop_event, stale_reads=3)
+
+    control_loop(grabber, FakeDetector([]), robot_client, _ControlView(), stop_event)
+
+    assert grabber.reads >= 3
+    assert set(robot_client.calls) == {"stop"}  # never moved, only stopped

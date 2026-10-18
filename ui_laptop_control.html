@@ -4,210 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ESP32 Robot Control (laptop-side)</title>
-<style>
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    padding: 24px;
-    background: #f4f5f7;
-    color: #1c1f23;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-  .layout {
-    max-width: 1440px;
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: 320px minmax(0, 1fr) 300px;
-    grid-template-areas:
-      "drive video status"
-      "keys  keys  keys";
-    gap: 20px;
-    align-items: start;
-  }
-  .col-drive  { grid-area: drive; }
-  .col-video  { grid-area: video; }
-  .col-status { grid-area: status; }
-  .col-keys   { grid-area: keys; }
-
-  @media (max-width: 1100px) {
-    .layout {
-      grid-template-columns: 1fr 1fr;
-      grid-template-areas:
-        "video  video"
-        "drive  status"
-        "keys   keys";
-    }
-  }
-
-  .panel {
-    background: #fff;
-    border: 1px solid #e3e5e9;
-    border-radius: 12px;
-    padding: 16px;
-    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-  }
-  .panel h2 {
-    font-size: 12px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #6b7280;
-    margin: 0 0 12px;
-  }
-
-  /* ---- video ---- */
-  #stream {
-    width: 100%;
-    display: block;
-    border-radius: 8px;
-    background: #10131a;
-    aspect-ratio: 4 / 3;
-    object-fit: contain;
-  }
-  .placeholder {
-    width: 100%;
-    aspect-ratio: 4 / 3;
-    border-radius: 8px;
-    background: #10131a;
-    color: #6b7280;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    font-size: 13px;
-  }
-  .placeholder .big { font-size: 15px; color: #9aa1ab; }
-
-  /* ---- d-pad ---- */
-  .pad {
-    display: grid;
-    grid-template-columns: repeat(3, 92px);
-    grid-template-rows: repeat(3, 92px);
-    gap: 10px;
-    justify-content: center;
-  }
-  .pad .slot { visibility: hidden; }
-
-  button.ctl {
-    position: relative;
-    border: 1px solid #d7dae0;
-    border-radius: 10px;
-    background: #fbfbfc;
-    color: #1c1f23;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    transition: background 0.08s, border-color 0.08s, transform 0.06s;
-  }
-  button.ctl .glyph { font-size: 20px; line-height: 1; }
-  button.ctl:hover { background: #f1f3f6; }
-  button.ctl.active {
-    background: #dbeafe;
-    border-color: #3b82f6;
-    transform: scale(0.97);
-  }
-  button.ctl.stop.active { background: #fee2e2; border-color: #ef4444; }
-
-  .badge {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    min-width: 17px;
-    height: 17px;
-    padding: 0 4px;
-    border-radius: 4px;
-    background: #eceef2;
-    border: 1px solid #d7dae0;
-    color: #6b7280;
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 15px;
-    text-align: center;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-  button.ctl.active .badge {
-    background: #fff;
-    border-color: #3b82f6;
-    color: #1d4ed8;
-  }
-
-  .row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-top: 10px;
-  }
-  .row button.ctl { height: 56px; flex-direction: row; gap: 8px; }
-  .wide { grid-column: 1 / -1; }
-  button.ctl.shoot { background: #fff7ed; border-color: #fdba74; color: #9a3412; }
-  button.ctl.shoot.active { background: #fed7aa; border-color: #ea580c; }
-
-  /* ---- status indicators ---- */
-  .status { display: flex; flex-direction: column; gap: 9px; }
-  .stat {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    font-size: 13px;
-    color: #374151;
-  }
-  .stat .label { flex: 1; color: #6b7280; }
-  .stat .val { font-weight: 600; font-variant-numeric: tabular-nums; }
-  .dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #cbd2da;
-    flex: none;
-    transition: background 0.1s;
-  }
-  .dot.on { background: #22c55e; }
-  .dot.warn { background: #f59e0b; }
-  .dot.fire { background: #ea580c; }
-  .dot.off { background: #ef4444; }
-
-  kbd {
-    display: inline-block;
-    min-width: 20px;
-    padding: 1px 5px;
-    border-radius: 4px;
-    background: #eceef2;
-    border: 1px solid #d7dae0;
-    border-bottom-width: 2px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-    color: #374151;
-    text-align: center;
-  }
-  .keymap {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 28px;
-    font-size: 13px;
-  }
-  .keymap .item { display: flex; align-items: center; gap: 8px; }
-  .keymap .desc { color: #6b7280; }
-  .keymap .sep { width: 1px; align-self: stretch; background: #e3e5e9; }
-
-  .note {
-    margin-top: 10px;
-    font-size: 12px;
-    color: #92400e;
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    border-radius: 8px;
-    padding: 8px 10px;
-  }
-</style>
+<link rel="stylesheet" href="ui_laptop_control.css">
 </head>
 <body>
 
@@ -264,14 +61,33 @@
   </div>
 
   <!-- ================= status (right) ================= -->
-  <div class="panel col-status">
+  <div class="col-status stack">
+  <div class="panel">
+      <h2>Modes</h2>
+      <div class="modes">
+        <button class="toggle" id="toggle-auto" data-mode="auto" aria-pressed="false">
+          <span class="toggle-text"><span class="toggle-name">Autonomy</span><span class="toggle-desc">robot drives itself</span></span>
+          <span class="switch"></span>
+        </button>
+        <button class="toggle" id="toggle-detect" data-mode="detect" aria-pressed="false">
+          <span class="toggle-text"><span class="toggle-name">Detection</span><span class="toggle-desc">YOLO boxes on the stream</span></span>
+          <span class="switch"></span>
+        </button>
+      </div>
+      <div class="note" id="mode-note">Checking for the bridge&hellip;</div>
+  </div>
+  <div class="panel">
       <h2>Status</h2>
       <div class="status">
         <div class="stat"><span class="dot" id="dot-drive"></span><span class="label">Drive</span><span class="val" id="val-drive">idle</span></div>
         <div class="stat"><span class="dot" id="dot-led"></span><span class="label">Light</span><span class="val" id="val-led">off</span></div>
         <div class="stat"><span class="dot" id="dot-shoot"></span><span class="label">Shoot</span><span class="val" id="val-shoot">ready</span></div>
         <div class="stat"><span class="dot warn" id="dot-link"></span><span class="label">Link</span><span class="val" id="val-link">unknown</span></div>
+        <div class="stat"><span class="dot warn" id="dot-bridge"></span><span class="label">Bridge</span><span class="val" id="val-bridge">checking</span></div>
+        <div class="stat"><span class="dot" id="dot-auto"></span><span class="label">Autonomy</span><span class="val" id="val-auto">off</span></div>
+        <div class="stat"><span class="dot" id="dot-detect"></span><span class="label">Detection</span><span class="val" id="val-detect">off</span></div>
       </div>
+  </div>
   </div>
 
   <!-- ================= keyboard map (full width, bottom) ================= -->
@@ -294,18 +110,33 @@ var ROBOT_IP = '192.168.4.1';
 function robotOrigin() {
   return 'http://' + ROBOT_IP;
 }
+// Laptop-side backend (python -m bridge): runs YOLO and autonomy.
+var BRIDGE = 'http://localhost:8001';
 
 // ---- camera stream ----
+// The robot streams to one client at a time. With the bridge running, the
+// bridge is that client and re-serves the video (with YOLO boxes); without
+// it, the page falls back to the robot's stream directly. The page must not
+// hold the robot's stream while the bridge runs, or the bridge gets no video.
 var img = document.getElementById('stream');
 var placeholder = document.getElementById('placeholder');
-function loadStream() {
-  var url = robotOrigin() + ':81/stream';
-  document.getElementById('streamurl').textContent = url;
-  img.src = url;
+var streamSource = null; // 'bridge' | 'robot'
+function streamUrl() {
+  return streamSource === 'bridge' ? BRIDGE + '/stream' : robotOrigin() + ':81/stream';
 }
+function useStream(source) {
+  if (streamSource === source) return;
+  streamSource = source;
+  document.getElementById('streamurl').textContent = streamUrl();
+  img.src = streamUrl() + '?' + Date.now();
+}
+var retryTimer = null;
 img.onload = function () { img.style.display = 'block'; placeholder.style.display = 'none'; };
-img.onerror = function () { img.style.display = 'none'; placeholder.style.display = 'flex'; };
-loadStream();
+img.onerror = function () {
+  img.style.display = 'none'; placeholder.style.display = 'flex';
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(function () { img.src = streamUrl() + '?' + Date.now(); }, 2000);
+};
 
 // ---- command transport ----
 function setLink(ok) {
@@ -356,6 +187,108 @@ function flashShoot() {
   }, 350);
 }
 
+// ---- modes (autonomy / detection), via the bridge ----
+// The bridge is the source of truth: the toggles show what /status and
+// /mode report, not what was clicked. Polling /status is also the bridge's
+// heartbeat -- if it stops (tab closed, laptop asleep) the bridge turns
+// autonomy off and stops the robot.
+var modes = { auto: false, detect: false };
+var bridgeUp = false;
+var bridgeFails = 0;
+
+function setText(id, text) { document.getElementById(id).textContent = text; }
+function setDot(id, cls) { document.getElementById(id).className = 'dot' + (cls ? ' ' + cls : ''); }
+
+function renderToggle(mode, on, enabled) {
+  var btn = document.getElementById('toggle-' + mode);
+  btn.classList.toggle('on', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.disabled = !enabled;
+}
+function renderModes(s) {
+  modes.auto = s.auto;
+  modes.detect = s.detect;
+  renderToggle('auto', s.auto, s.detector_available);
+  renderToggle('detect', s.detect, s.detector_available);
+
+  setText('val-auto', s.auto ? (s.nav_state || 'starting').toLowerCase() : 'off');
+  setDot('dot-auto', s.auto ? 'on' : '');
+  var top = s.detections[0];
+  setText('val-detect', !s.detect ? 'off'
+    : top ? top.label + ' ' + top.confidence.toFixed(2) : 'nothing');
+  setDot('dot-detect', s.detect ? (top ? 'fire' : 'on') : '');
+  setText('val-bridge', s.stream.ok ? 'running' : 'waiting for robot');
+  setDot('dot-bridge', s.stream.ok ? 'on' : 'warn');
+
+  var note = document.getElementById('mode-note');
+  note.style.display = s.detector_available ? 'none' : 'block';
+  note.textContent = 'The bridge could not load the YOLO model; autonomy and detection are unavailable.';
+}
+function renderBridgeDown() {
+  modes.auto = false;
+  modes.detect = false;
+  renderToggle('auto', false, false);
+  renderToggle('detect', false, false);
+  setText('val-auto', 'off'); setDot('dot-auto', '');
+  setText('val-detect', 'off'); setDot('dot-detect', '');
+  setText('val-bridge', 'not running'); setDot('dot-bridge', 'off');
+  var note = document.getElementById('mode-note');
+  note.style.display = 'block';
+  note.innerHTML = 'Start the bridge to use these: <kbd>python -m bridge</kbd>';
+}
+
+function pollStatus() {
+  var x = new XMLHttpRequest();
+  x.open('GET', BRIDGE + '/status', true);
+  x.timeout = 1000;
+  x.onload = function () {
+    if (x.status !== 200) { onBridgeDown(); return; }
+    bridgeFails = 0;
+    bridgeUp = true;
+    useStream('bridge');
+    renderModes(JSON.parse(x.responseText));
+  };
+  x.onerror = x.ontimeout = onBridgeDown;
+  x.onloadend = function () { setTimeout(pollStatus, 500); };
+  x.send();
+}
+function onBridgeDown() {
+  bridgeFails++;
+  // Wait for a few misses before falling back, so one slow reply doesn't
+  // make the page grab the robot's stream away from a running bridge.
+  if (bridgeFails >= 3 || streamSource === null) {
+    bridgeUp = false;
+    useStream('robot');
+    renderBridgeDown();
+  }
+}
+function postMode(body, done) {
+  var x = new XMLHttpRequest();
+  x.open('POST', BRIDGE + '/mode', true);
+  x.timeout = 6000; // turning autonomy off waits for its current tick
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onload = function () { if (x.status === 200) renderModes(JSON.parse(x.responseText)); };
+  x.onloadend = function () { if (done) done(); };
+  x.send(JSON.stringify(body));
+}
+[].forEach.call(document.querySelectorAll('button.toggle'), function (b) {
+  b.addEventListener('click', function () {
+    if (!bridgeUp) return;
+    var body = {};
+    body[b.dataset.mode] = !modes[b.dataset.mode];
+    postMode(body);
+  });
+});
+// Manual control wins: any drive input while autonomy runs turns it off
+// (which stops the robot) before the manual command is sent, so the two
+// never fight over the motors.
+function takeOverFromAuto(then) {
+  if (!modes.auto) { then(); return; }
+  modes.auto = false;
+  postMode({ auto: false }, then);
+}
+pollStatus();
+
 // ---- command dispatch ----
 var current = null; // currently held movement command
 
@@ -363,9 +296,10 @@ function startMove(cmd) {
   if (current === cmd) return;
   if (current) setActive(current, false);
   current = cmd;
-  send(cmd);
   setActive(cmd, true);
   setDrive(cmd);
+  // Still held once autonomy has let go? Then drive.
+  takeOverFromAuto(function () { if (current === cmd) send(cmd); });
 }
 function stopMove() {
   if (current) setActive(current, false);
@@ -376,6 +310,7 @@ function stopMove() {
 function doCommand(cmd) {
   if (cmd === 'stop') {
     stopMove();
+    if (modes.auto) takeOverFromAuto(function () {});
     setActive('stop', true);
     setTimeout(function () { setActive('stop', false); }, 150);
   } else if (cmd === 'ledon') {
