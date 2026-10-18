@@ -34,7 +34,11 @@ DETECTOR_CONFIDENCE_THRESHOLD = 0.5
 CONFIDENCE_THRESHOLD = 0.8
 
 # --- Navigation thresholds ---
-DEADZONE_FRACTION = 0.15
+# The bottle counts as centered while its box center is within this much of
+# the frame middle (0.25 -> the middle 50% of the frame). Keep the zone
+# (2 x this) wider than how far one TURN_PULSE_S tap shifts the view, or
+# centering overshoots back and forth.
+DEADZONE_FRACTION = 0.25
 # The robot has no distance sensor, so "close enough" is judged by how tall
 # the bottle's box is, as a fraction of the frame height. Calibrate: put a
 # bottle ~5cm in front of the camera, read h= from the log line, and set
