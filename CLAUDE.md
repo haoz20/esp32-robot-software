@@ -99,7 +99,11 @@ stay on the main thread on macOS).
   when no bytes arrive for `STREAM_STALL_TIMEOUT_S`. Don't tear the
   connection down on a stale frame: the firmware streams to one client at
   a time, so a new connection waits behind the dead one.
-- Continuous search (`CONTINUOUS_SEARCH`): a mid-spin sighting only stops
+- Search defaults to tap-left-pause-look (`SEARCH_PAUSE_S`); approach
+  needs `CONFIDENCE_THRESHOLD` (0.8), while the model itself reports down to
+  `DETECTOR_CONFIDENCE_THRESHOLD` for display. Arrival is a box-height
+  proxy (`ARRIVAL_HEIGHT_FRACTION`) that needs calibrating on the robot.
+- Optional continuous search (`CONTINUOUS_SEARCH = True`): a mid-spin sighting only stops
   the robot and enters `CONFIRMING`, which re-checks on a still frame and
   pulses left to undo overshoot -- detection latency means the robot has
   always turned past the target by the time it's seen.

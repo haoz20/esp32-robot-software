@@ -27,18 +27,33 @@ STALE_FRAME_WAIT_S = 0.2
 
 # --- Detection model ---
 MODEL_PATH = "autonomy/models/best.pt"
-CONFIDENCE_THRESHOLD = 0.5
+# The model reports detections down to DETECTOR_CONFIDENCE_THRESHOLD (what
+# the debug window / UI shows), but the robot only approaches -- and keeps
+# approaching -- a target at CONFIDENCE_THRESHOLD or above.
+DETECTOR_CONFIDENCE_THRESHOLD = 0.5
+CONFIDENCE_THRESHOLD = 0.8
 
 # --- Navigation thresholds ---
 DEADZONE_FRACTION = 0.15
-ARRIVAL_HEIGHT_FRACTION = 0.6
+# The robot has no distance sensor, so "close enough" is judged by how tall
+# the bottle's box is, as a fraction of the frame height. Calibrate: put a
+# bottle ~5cm in front of the camera, read h= from the log line, and set
+# ARRIVAL_HEIGHT_FRACTION to it.
+ARRIVAL_HEIGHT_FRACTION = 0.85
+# Past this box height, creep in shorter steps so the last one doesn't
+# overshoot the stopping point.
+NEAR_HEIGHT_FRACTION = 0.6
 LOST_TARGET_TICKS = 3
+# Search taps per sweep before creeping forward for a new view.
 ROTATION_STEPS_PER_SWEEP = 12
+# After each search tap, hold still this long before looking: lets the robot
+# settle and the camera deliver sharp, current frames.
+SEARCH_PAUSE_S = 1.5
 
 # --- Continuous search ---
-# True: spin right without stopping and look at every frame (fast). False:
-# the original pulse-turn-then-look search.
-CONTINUOUS_SEARCH = True
+# False (default): tap left, pause, look, repeat. True: spin right without
+# stopping and look at every frame.
+CONTINUOUS_SEARCH = False
 # Lower than CONFIDENCE_THRESHOLD: mid-spin frames are blurred, and a
 # sighting only stops the robot to re-check on a still frame.
 SEARCH_CONFIDENCE_THRESHOLD = 0.35
@@ -52,9 +67,12 @@ MAX_CORRECTION_STEPS = 4
 # --- Motor pulse durations (seconds) ---
 TURN_PULSE_S = 0.2
 CREEP_PULSE_S = 0.4
+SHORT_CREEP_PULSE_S = 0.15
 
 # --- Control loop ---
-LOOP_INTERVAL_S = 0.25
+# Pause between approach steps, so each decision uses a frame taken after
+# the last move finished.
+LOOP_INTERVAL_S = 0.5
 KILL_SWITCH_KEY = ord(" ")
 
 # --- Debug window ---

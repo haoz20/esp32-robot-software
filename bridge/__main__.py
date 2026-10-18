@@ -46,7 +46,7 @@ def main():
                            timeout_s=autonomy_config.ROBOT_HTTP_TIMEOUT_S)
 
     # Model first, on the main thread, before any other thread exists.
-    detector = _load_detector(args.model, autonomy_config.CONFIDENCE_THRESHOLD)
+    detector = _load_detector(args.model, autonomy_config.DETECTOR_CONFIDENCE_THRESHOLD)
     frame_grabber = FrameGrabber(
         args.robot_ip, port=args.robot_stream_port,
         max_frame_age_s=autonomy_config.MAX_FRAME_AGE_S,

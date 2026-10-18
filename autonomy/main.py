@@ -46,11 +46,13 @@ _COMMAND_TO_CLIENT_CALL = {
     CommandType.TURN_LEFT: "left",
     CommandType.TURN_RIGHT: "right",
     CommandType.CREEP_FORWARD: "go",
+    CommandType.CREEP_FORWARD_SHORT: "go",
 }
 _COMMAND_TO_PULSE_S = {
     CommandType.TURN_LEFT: config.TURN_PULSE_S,
     CommandType.TURN_RIGHT: config.TURN_PULSE_S,
     CommandType.CREEP_FORWARD: config.CREEP_PULSE_S,
+    CommandType.CREEP_FORWARD_SHORT: config.SHORT_CREEP_PULSE_S,
 }
 _STOP_RETRY_ATTEMPTS = 3
 _STOP_RETRY_DELAY_S = 0.2
@@ -80,6 +82,7 @@ def run_tick(nav_state, frame, detector, robot_client, sleep=time.sleep, *,
         spin_elapsed_s=spin.elapsed(),
         max_spin_s=config.MAX_SPIN_S,
         max_correction_steps=config.MAX_CORRECTION_STEPS,
+        near_height_fraction=config.NEAR_HEIGHT_FRACTION,
     )
 
     if command.type == CommandType.SPIN_RIGHT:
@@ -253,15 +256,23 @@ def control_loop(frame_grabber, detector, robot_client, view, stop_event):
             view.publish(detections, nav_state)
 
             # While spinning, a tick runs every frame; only log changes.
-            seen = ", ".join(f"{d.label} {d.confidence:.2f}" for d in detections) or "nothing"
+            # h= is the box height fraction ARRIVAL_HEIGHT_FRACTION is
+            # calibrated against.
+            seen = ", ".join(f"{d.label} {d.confidence:.2f} h={d.height:.2f}"
+                             for d in detections) or "nothing"
             report = (nav_state.state, command.type, seen)
             if report != last_report:
                 print(f"[{nav_state.state.name}] sees: {seen} -> {command.type.name}")
                 last_report = report
 
-            # A spin has to be watched every frame; stepped moves get the
-            # usual pause between ticks.
-            if not spin.active:
+            # A spin has to be watched every frame. A search tap gets a
+            # longer look before the next one; approach steps the usual
+            # pause.
+            if spin.active:
+                pass
+            elif nav_state.state == State.SEARCHING and command.type != CommandType.NONE:
+                stop_event.wait(config.SEARCH_PAUSE_S)
+            else:
                 stop_event.wait(config.LOOP_INTERVAL_S)
     finally:
         _stop_best_effort(robot_client)
@@ -290,7 +301,7 @@ def main():
         stall_timeout_s=config.STREAM_STALL_TIMEOUT_S,
     )
     # Built on the main thread, before the control thread exists.
-    detector = Detector(config.MODEL_PATH, config.CONFIDENCE_THRESHOLD)
+    detector = Detector(config.MODEL_PATH, config.DETECTOR_CONFIDENCE_THRESHOLD)
 
     view = _ControlView()
     stop_event = threading.Event()

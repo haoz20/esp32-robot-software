@@ -46,10 +46,10 @@ SEARCH_KWARGS = dict(
 )
 
 
-def test_searching_with_no_detections_turns_right_and_counts_steps():
+def test_searching_with_no_detections_taps_left_and_counts_steps():
     nav_state = NavigatorState(state=State.SEARCHING, rotation_step=0)
     command, next_state = step(nav_state, [], **SEARCH_KWARGS)
-    assert command == Command(CommandType.TURN_RIGHT)
+    assert command == Command(CommandType.TURN_LEFT)
     assert next_state.state == State.SEARCHING
     assert next_state.rotation_step == 1
 
@@ -199,4 +199,38 @@ def test_confirming_requires_the_full_confidence_threshold():
 
 def test_pulse_search_is_still_the_default():
     command, _ = step(NavigatorState(state=State.SEARCHING), [], **SEARCH_KWARGS)
-    assert command == Command(CommandType.TURN_RIGHT)
+    assert command == Command(CommandType.TURN_LEFT)
+
+
+def test_search_ignores_a_target_below_the_approach_threshold():
+    # 0.7 would have been approached before; now only > 0.8 counts.
+    weak = make_detection(confidence=0.7)
+    command, next_state = step(NavigatorState(state=State.SEARCHING), [weak],
+                               **dict(SEARCH_KWARGS, confidence_threshold=0.8))
+    assert command == Command(CommandType.TURN_LEFT)
+    assert next_state.state == State.SEARCHING
+
+
+def test_approach_uses_short_creeps_once_the_target_is_near():
+    near = make_detection(x_center=0.5, height=0.7)
+    command, next_state = step(NavigatorState(state=State.APPROACHING), [near],
+                               near_height_fraction=0.6,
+                               **dict(SEARCH_KWARGS, arrival_height_fraction=0.85))
+    assert command == Command(CommandType.CREEP_FORWARD_SHORT)
+    assert next_state.state == State.APPROACHING
+
+
+def test_approach_uses_normal_creeps_while_the_target_is_far():
+    far = make_detection(x_center=0.5, height=0.3)
+    command, _ = step(NavigatorState(state=State.APPROACHING), [far],
+                      near_height_fraction=0.6,
+                      **dict(SEARCH_KWARGS, arrival_height_fraction=0.85))
+    assert command == Command(CommandType.CREEP_FORWARD)
+
+
+def test_approach_centers_before_creeping_even_when_near():
+    near_left = make_detection(x_center=0.2, height=0.7)
+    command, _ = step(NavigatorState(state=State.APPROACHING), [near_left],
+                      near_height_fraction=0.6,
+                      **dict(SEARCH_KWARGS, arrival_height_fraction=0.85))
+    assert command == Command(CommandType.TURN_LEFT)

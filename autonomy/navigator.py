@@ -4,8 +4,9 @@ No dependency on requests, cv2, or ultralytics — this module only reasons
 about Detection values and NavigatorState, so it is fully unit-testable
 without the robot, camera, or model present.
 
-Two search modes. Pulse search (the default) turns in fixed steps, looking
-after each one. Continuous search (continuous_search=True) keeps the robot
+Two search modes. Pulse search (the default) turns left in single short
+taps, looking after each one -- the way you'd search by hand: tap, wait,
+look, tap again. Continuous search (continuous_search=True) keeps the robot
 spinning right (SPIN_RIGHT) and looks at every frame, which finds a target
 much faster -- but a frame taken mid-spin is blurred and, by the time
 detection returns, the robot has already turned past it. So a sighting
@@ -29,6 +30,7 @@ class CommandType(Enum):
     TURN_LEFT = auto()
     TURN_RIGHT = auto()
     CREEP_FORWARD = auto()
+    CREEP_FORWARD_SHORT = auto()  # smaller step for the last stretch to the target
     SPIN_RIGHT = auto()  # start (or keep) turning right with no stop
     STOP = auto()
     NONE = auto()
@@ -67,8 +69,13 @@ def best_detection(detections, confidence_threshold):
 def step(nav_state, detections, *, confidence_threshold, deadzone_fraction,
           arrival_height_fraction, lost_target_ticks, rotation_steps_per_sweep,
           continuous_search=False, search_confidence_threshold=None,
-          spin_elapsed_s=0.0, max_spin_s=float("inf"), max_correction_steps=0):
+          spin_elapsed_s=0.0, max_spin_s=float("inf"), max_correction_steps=0,
+          near_height_fraction=None):
     """Decide the next command.
+
+    near_height_fraction: once the target's box is at least this tall (as a
+    fraction of the frame), creep with CREEP_FORWARD_SHORT instead, so the
+    final approach doesn't overshoot arrival_height_fraction. None disables.
 
     Continuous-search-only arguments: search_confidence_threshold (lower
     than confidence_threshold, since mid-spin frames are blurred; defaults
@@ -107,7 +114,7 @@ def step(nav_state, detections, *, confidence_threshold, deadzone_fraction,
             return Command(CommandType.CREEP_FORWARD), NavigatorState(
                 state=State.SEARCHING, rotation_step=0, lost_ticks=0
             )
-        return Command(CommandType.TURN_RIGHT), NavigatorState(
+        return Command(CommandType.TURN_LEFT), NavigatorState(
             state=State.SEARCHING, rotation_step=nav_state.rotation_step + 1, lost_ticks=0
         )
 
@@ -130,7 +137,9 @@ def step(nav_state, detections, *, confidence_threshold, deadzone_fraction,
             )
 
         if target.height < arrival_height_fraction:
-            return Command(CommandType.CREEP_FORWARD), NavigatorState(
+            near = near_height_fraction is not None and target.height >= near_height_fraction
+            creep = CommandType.CREEP_FORWARD_SHORT if near else CommandType.CREEP_FORWARD
+            return Command(creep), NavigatorState(
                 state=State.APPROACHING, rotation_step=0, lost_ticks=0
             )
 
