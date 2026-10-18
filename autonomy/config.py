@@ -45,7 +45,7 @@ ARRIVAL_HEIGHT_FRACTION = 0.85
 NEAR_HEIGHT_FRACTION = 0.6
 LOST_TARGET_TICKS = 3
 # Search taps per sweep before creeping forward for a new view.
-ROTATION_STEPS_PER_SWEEP = 12
+ROTATION_STEPS_PER_SWEEP = 16
 # After each search tap, hold still this long before looking: lets the robot
 # settle and the camera deliver sharp, current frames.
 SEARCH_PAUSE_S = 1.5

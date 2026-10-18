@@ -82,7 +82,6 @@
         <div class="stat"><span class="dot" id="dot-drive"></span><span class="label">Drive</span><span class="val" id="val-drive">idle</span></div>
         <div class="stat"><span class="dot" id="dot-led"></span><span class="label">Light</span><span class="val" id="val-led">off</span></div>
         <div class="stat"><span class="dot" id="dot-shoot"></span><span class="label">Shoot</span><span class="val" id="val-shoot">ready</span></div>
-        <div class="stat"><span class="dot warn" id="dot-link"></span><span class="label">Link</span><span class="val" id="val-link">unknown</span></div>
         <div class="stat"><span class="dot warn" id="dot-bridge"></span><span class="label">Bridge</span><span class="val" id="val-bridge">checking</span></div>
         <div class="stat"><span class="dot" id="dot-auto"></span><span class="label">Autonomy</span><span class="val" id="val-auto">off</span></div>
         <div class="stat"><span class="dot" id="dot-detect"></span><span class="label">Detection</span><span class="val" id="val-detect">off</span></div>
@@ -139,17 +138,13 @@ img.onerror = function () {
 };
 
 // ---- command transport ----
-function setLink(ok) {
-  document.getElementById('dot-link').className = 'dot ' + (ok ? 'on' : 'off');
-  document.getElementById('val-link').textContent = ok ? 'connected' : 'no response';
-}
+// Fire-and-forget: the robot's drive endpoints send no CORS headers, so
+// the page can't read their replies anyway. Robot reachability shows in
+// the Bridge row instead.
 function send(cmd) {
   var x = new XMLHttpRequest();
   x.open('GET', robotOrigin() + '/' + cmd + '?' + Date.now(), true);
   x.timeout = 2000;
-  x.onload = function () { setLink(true); };   // request landed, response readable
-  x.onerror = function () { setLink(false); }; // could be offline, or just no CORS header on this route
-  x.ontimeout = function () { setLink(false); };
   x.send();
 }
 
