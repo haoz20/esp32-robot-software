@@ -11,6 +11,11 @@ for the design.
 
     conda env create -f autonomy/environment.yml
     conda activate esp32-robot-autonomy
+    bash autonomy/macos_fix_openmp.sh   # macOS only; re-run after reinstalling torch
+
+On macOS, torch's bundled OpenMP runtime clashes with the one conda's numpy
+loads and segfaults on the first YOLO inference; the script points torch at
+the env's copy. It only changes the local env, so Windows is unaffected.
 
 Drop a trained YOLO model (classes `red_bottle`, `green_bottle`) at
 `autonomy/models/best.pt` before running.
