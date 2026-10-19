@@ -13,6 +13,8 @@ HTTP API — each can be used independently.
 - `ESP32_Camera_4WD_Robot_Car_OV3660_V3/` — Arduino sketch + `app_httpd.cpp`/`camera_index.h`, flashed to the ESP32-CAM.
 - `webapp/` — React + Vite manual control UI, runs on the laptop, never flashed to the board.
 - `autonomy/` — standalone Python service that follows a detected target.
+- `bridge/` — laptop-side backend for `ui_laptop_control.html`: re-serves the
+  stream with YOLO boxes and runs autonomy on/off from the page's toggles.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` — design docs for features (e.g. the autonomy service design/plan).
 
 ## Commands
@@ -28,6 +30,15 @@ pytest autonomy/tests/test_navigator.py::test_name   # single test
 ```
 
 Press SPACE in the debug window to stop the robot and exit.
+
+### Bridge (Python, same conda env)
+
+```bash
+python -m bridge                 # http://localhost:8001, then open ui_laptop_control.html
+pytest bridge/tests
+```
+
+Use `preview_start` with the `laptop-ui` config to serve `ui_laptop_control.html`.
 
 ### Webapp (React/Vite)
 
@@ -62,8 +73,11 @@ can't reliably read the response.
 A control loop in `main.py` wires four independently-testable pieces
 together each tick: grab a frame (`stream.py`'s `FrameGrabber`) → detect
 (`detector.py`'s `Detector`, wraps a YOLO model) → decide a command
-(`navigator.py`'s `step()`) → execute as a pulse-then-stop
-(`robot_client.py`'s `RobotClient`).
+(`navigator.py`'s `step()`) → execute as a pulse-then-stop, or a
+continuous spin while searching (`robot_client.py`'s `RobotClient`). The
+control loop runs in a worker thread; the main thread only redraws the
+debug window at stream rate and polls the kill switch (cv2 windows must
+stay on the main thread on macOS).
 
 - `navigator.py` is a **pure state machine** (`SEARCHING` → `APPROACHING` →
   `ARRIVED`, driven by `step()`) with zero dependency on requests/cv2/
@@ -79,13 +93,39 @@ together each tick: grab a frame (`stream.py`'s `FrameGrabber`) → detect
   dropped stop is the single highest-risk failure mode. On request failure
   the loop treats it as "nothing happened this tick" and retries next tick
   rather than raising — exiting the process wouldn't stop the robot either.
-- Stream reconnect uses exponential backoff (capped at 10s); the robot is
-  kept stopped for the whole duration of a reconnect wait.
+- A stale frame (older than `MAX_FRAME_AGE_S`) only holds the robot
+  stopped; `FrameGrabber` keeps the connection open through short WiFi
+  gaps and reconnects itself (exponential backoff, capped at 10s) only
+  when no bytes arrive for `STREAM_STALL_TIMEOUT_S`. Don't tear the
+  connection down on a stale frame: the firmware streams to one client at
+  a time, so a new connection waits behind the dead one.
+- Search defaults to tap-left-pause-look (`SEARCH_PAUSE_S`); approach
+  needs `CONFIDENCE_THRESHOLD` (0.8), while the model itself reports down to
+  `DETECTOR_CONFIDENCE_THRESHOLD` for display. Arrival is a box-height
+  proxy (`ARRIVAL_HEIGHT_FRACTION`) that needs calibrating on the robot.
+- Optional continuous search (`CONTINUOUS_SEARCH = True`): a mid-spin sighting only stops
+  the robot and enters `CONFIRMING`, which re-checks on a still frame and
+  pulses left to undo overshoot -- detection latency means the robot has
+  always turned past the target by the time it's seen.
 - `os.environ` OpenMP thread-limiting (`KMP_DUPLICATE_LIB_OK`,
   `OMP_NUM_THREADS`, etc.) is set at the very top of `main.py` before any
   cv2/torch import — required on macOS where opencv-python and
   ultralytics' torch each bundle their own `libomp.dylib`; removing or
   reordering this reintroduces a process-abort/segfault.
+
+### Bridge (`bridge/`)
+
+- The robot's `:81/stream` serves one client at a time, so the bridge is the
+  only stream client and re-serves `/stream` to the page;
+  `ui_laptop_control.html` falls back to the robot's stream directly only
+  after several missed `/status` polls, so it never grabs the stream from a
+  running bridge.
+- `service.py`'s `Bridge` reuses autonomy's `control_loop` as-is in a
+  thread; the detect worker idles while autonomy runs, since the control
+  loop detects itself. `LockedDetector` serializes the shared model.
+- `/status` polls double as a heartbeat: no poll for
+  `HEARTBEAT_TIMEOUT_S` turns autonomy off. Manual drive input in the page
+  turns autonomy off before sending its command.
 
 ### Webapp (`webapp/`)
 
