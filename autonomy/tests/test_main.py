@@ -34,7 +34,7 @@ class FakeRobotClient:
         self.calls.append("stop")
 
 
-def test_run_tick_pulses_then_stops_for_a_turn_command():
+def test_run_tick_pulses_then_stops_for_a_search_turn():
     nav_state = NavigatorState(state=State.SEARCHING, rotation_step=0)
     detector = FakeDetector([])
     robot_client = FakeRobotClient()
@@ -45,10 +45,10 @@ def test_run_tick_pulses_then_stops_for_a_turn_command():
         robot_client=robot_client, sleep=sleeps.append
     )
 
-    assert command == Command(CommandType.TURN_RIGHT)
+    assert command == Command(CommandType.TURN_LEFT)
     assert next_state.state == State.SEARCHING
     assert detections == []
-    assert robot_client.calls == ["right", "stop"]
+    assert robot_client.calls == ["left", "stop"]
     assert len(sleeps) == 1
 
 
@@ -68,18 +68,20 @@ def test_run_tick_issues_no_robot_calls_once_arrived():
 
 
 class RaisingOnceRobotClient(FakeRobotClient):
-    """right() raises once, then behaves normally; stop() always succeeds."""
+    """`method` (left by default) raises once, then behaves normally; stop() always succeeds."""
 
-    def __init__(self):
+    def __init__(self, method="left"):
         super().__init__()
-        self._right_raised = False
+        self._method = method
+        self._raised = False
+        setattr(self, method, self._raise_once)
 
-    def right(self):
-        if not self._right_raised:
-            self._right_raised = True
-            self.calls.append("right (raised)")
+    def _raise_once(self):
+        if not self._raised:
+            self._raised = True
+            self.calls.append(f"{self._method} (raised)")
             raise requests.exceptions.ConnectionError("simulated network failure")
-        super().right()
+        getattr(FakeRobotClient, self._method)(self)
 
 
 def test_run_tick_still_stops_when_the_movement_call_fails():
@@ -87,13 +89,37 @@ def test_run_tick_still_stops_when_the_movement_call_fails():
     detector = FakeDetector([])
     robot_client = RaisingOnceRobotClient()
 
-    with pytest.raises(requests.exceptions.ConnectionError):
-        run_tick(
-            nav_state, frame="fake-frame", detector=detector,
-            robot_client=robot_client, sleep=lambda s: None
-        )
+    run_tick(
+        nav_state, frame="fake-frame", detector=detector,
+        robot_client=robot_client, sleep=lambda s: None
+    )
 
-    assert robot_client.calls == ["right (raised)", "stop"]
+    assert robot_client.calls == ["left (raised)", "stop"]
+
+
+def test_a_dropped_movement_command_is_not_fatal_and_is_retried_next_tick():
+    # The robot's own control page fires commands and ignores failures; one
+    # dropped request on a busy WiFi link must not end the autonomy run.
+    nav_state = NavigatorState(state=State.SEARCHING, rotation_step=3)
+    detector = FakeDetector([])
+    robot_client = RaisingOnceRobotClient()
+
+    command, next_state, _ = run_tick(
+        nav_state, frame="fake-frame", detector=detector,
+        robot_client=robot_client, sleep=lambda s: None
+    )
+
+    assert command == Command(CommandType.NONE)
+    assert next_state == nav_state  # not advanced: the turn never happened
+
+    command, next_state, _ = run_tick(
+        next_state, frame="fake-frame", detector=detector,
+        robot_client=robot_client, sleep=lambda s: None
+    )
+
+    assert command == Command(CommandType.TURN_LEFT)
+    assert next_state.rotation_step == 4
+    assert robot_client.calls == ["left (raised)", "stop", "left", "stop"]
 
 
 class FlakyStopRobotClient(FakeRobotClient):
@@ -122,7 +148,7 @@ def test_run_tick_retries_stop_before_giving_up():
         robot_client=robot_client, sleep=sleeps.append
     )
 
-    assert robot_client.calls == ["right", "stop (failed)", "stop (failed)", "stop"]
+    assert robot_client.calls == ["left", "stop (failed)", "stop (failed)", "stop"]
     # one sleep for the pulse duration, two for the stop-retry backoff
     assert len(sleeps) == 3
 
@@ -133,6 +159,7 @@ def test_run_tick_retries_stop_before_giving_up():
         (CommandType.TURN_LEFT, "left", config.TURN_PULSE_S),
         (CommandType.TURN_RIGHT, "right", config.TURN_PULSE_S),
         (CommandType.CREEP_FORWARD, "go", config.CREEP_PULSE_S),
+        (CommandType.CREEP_FORWARD_SHORT, "go", config.SHORT_CREEP_PULSE_S),
     ],
 )
 def test_run_tick_dispatches_each_command_to_the_right_call_and_pulse(
@@ -173,4 +200,139 @@ def test_run_tick_reraises_after_all_stop_retries_are_exhausted():
             robot_client=robot_client, sleep=lambda s: None
         )
 
-    assert robot_client.calls == ["right", "stop (failed)", "stop (failed)", "stop (failed)"]
+    assert robot_client.calls == ["left", "stop (failed)", "stop (failed)", "stop (failed)"]
+
+
+from autonomy.main import _ControlView, _Spin, control_loop
+from autonomy.navigator import Detection
+
+
+def _sighting(confidence=0.9):
+    return Detection(label="red_bottle", confidence=confidence, x_center=0.5,
+                     y_center=0.5, width=0.2, height=0.2)
+
+
+def test_continuous_search_starts_a_spin_once_and_leaves_it_running():
+    robot_client = FakeRobotClient()
+    spin = _Spin(clock=lambda: 0.0)
+    nav_state = NavigatorState(state=State.SEARCHING)
+
+    for _ in range(3):
+        command, nav_state, _ = run_tick(
+            nav_state, frame="f", detector=FakeDetector([]), robot_client=robot_client,
+            sleep=lambda s: None, continuous_search=True, spin=spin,
+        )
+
+    assert command == Command(CommandType.SPIN_RIGHT)
+    assert robot_client.calls == ["right"]  # no stop between frames
+    assert spin.active
+
+
+def test_a_sighting_mid_spin_stops_settles_and_confirms():
+    robot_client = FakeRobotClient()
+    spin = _Spin(clock=lambda: 0.0)
+    spin.start()
+    sleeps = []
+
+    command, nav_state, _ = run_tick(
+        NavigatorState(state=State.SEARCHING), frame="f",
+        detector=FakeDetector([_sighting(confidence=0.4)]), robot_client=robot_client,
+        sleep=sleeps.append, continuous_search=True, spin=spin,
+    )
+
+    assert command == Command(CommandType.STOP)
+    assert nav_state.state == State.CONFIRMING
+    assert robot_client.calls == ["stop"]
+    assert sleeps == [config.SPIN_SETTLE_S]
+    assert not spin.active
+
+
+def test_a_pulse_command_while_spinning_stops_the_spin_first():
+    robot_client = FakeRobotClient()
+    spin = _Spin(clock=lambda: 100.0)
+    spin.start()
+
+    # Spinning too long with nothing seen -> creep forward for a new view.
+    spin._started_at = 100.0 - config.MAX_SPIN_S
+    run_tick(
+        NavigatorState(state=State.SEARCHING), frame="f", detector=FakeDetector([]),
+        robot_client=robot_client, sleep=lambda s: None, continuous_search=True, spin=spin,
+    )
+
+    assert robot_client.calls == ["stop", "go", "stop"]
+    assert not spin.active
+
+
+def test_a_dropped_spin_command_stops_and_is_retried_next_tick():
+    robot_client = RaisingOnceRobotClient(method="right")
+    spin = _Spin(clock=lambda: 0.0)
+    nav_state = NavigatorState(state=State.SEARCHING)
+
+    command, nav_state, _ = run_tick(
+        nav_state, frame="f", detector=FakeDetector([]), robot_client=robot_client,
+        sleep=lambda s: None, continuous_search=True, spin=spin,
+    )
+    assert command == Command(CommandType.NONE)
+    assert not spin.active
+
+    run_tick(
+        nav_state, frame="f", detector=FakeDetector([]), robot_client=robot_client,
+        sleep=lambda s: None, continuous_search=True, spin=spin,
+    )
+    assert robot_client.calls == ["right (raised)", "stop", "right"]
+    assert spin.active
+
+
+class StaleGrabber:
+    def __init__(self, stop_event, stale_reads):
+        self._stop_event = stop_event
+        self._stale_reads = stale_reads
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        if self.reads > self._stale_reads:
+            self._stop_event.set()
+        raise RuntimeError("frame is 2.0s old")
+
+
+def test_control_loop_holds_the_robot_stopped_while_frames_are_stale():
+    import threading
+
+    stop_event = threading.Event()
+    robot_client = FakeRobotClient()
+    grabber = StaleGrabber(stop_event, stale_reads=3)
+
+    control_loop(grabber, FakeDetector([]), robot_client, _ControlView(), stop_event)
+
+    assert grabber.reads >= 3
+    assert set(robot_client.calls) == {"stop"}  # never moved, only stopped
+
+
+class FrameGrabberStub:
+    def __init__(self, stop_event, ticks):
+        self._stop_event = stop_event
+        self._ticks = ticks
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        if self.reads > self._ticks:
+            self._stop_event.set()
+        return "frame"
+
+
+def test_control_loop_pauses_longer_after_a_search_tap(monkeypatch):
+    import threading
+
+    from autonomy import main as main_module
+
+    stop_event = threading.Event()
+    waits = []
+    real_wait = stop_event.wait
+    monkeypatch.setattr(stop_event, "wait", lambda t=None: waits.append(t) or real_wait(0))
+
+    control_loop(FrameGrabberStub(stop_event, ticks=1), FakeDetector([]), FakeRobotClient(),
+                 _ControlView(), stop_event)
+
+    assert waits[0] == config.SEARCH_PAUSE_S
